@@ -1,65 +1,145 @@
-## Creating VPC.##
+# VPC
 resource "aws_vpc" "main" {
- cidr_block = "10.0.0.0/16"
- 
- tags = {
-   Name = "NotesApp-VPC"
- }
+  cidr_block           = var.vpc_cidr_block
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-vpc"
+    }
+  )
 }
 
-## Creating subnets publics and privates in the VPC ##
-## if terraform detects a "count" in the code, it interprets as a loop  ##
-resource "aws_subnet" "public_subnets" {
- count      = length(var.public_subnet_cidrs)
- vpc_id     = aws_vpc.main.id
- cidr_block = element(var.public_subnet_cidrs, count.index)
- availability_zone = element(var.azs, count.index)
- 
- tags = {
-   Name = "Public-Subnet ${count.index + 1}"
- }
+# Public Subnets
+resource "aws_subnet" "public" {
+  for_each = var.public_subnets
+
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = each.value.cidr_block
+  availability_zone       = each.value.availability_zone
+  # map_public_ip_on_launch gives an public ip for every instance created in this subnet
+  map_public_ip_on_launch = true
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-${each.key}"
+      Type = "Public"
+    }
+  )
 }
 
-resource "aws_subnet" "private_subnets" {
- count      = length(var.private_subnet_cidrs)
- vpc_id     = aws_vpc.main.id
- cidr_block = element(var.private_subnet_cidrs, count.index)
- availability_zone = element(var.azs, count.index)
+# Private Subnets
+resource "aws_subnet" "private" {
+  for_each = var.private_subnets
 
- 
- tags = {
-   Name = "Private-Subnet ${count.index + 1}"
- }
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = each.value.cidr_block
+  availability_zone = each.value.availability_zone
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-${each.key}"
+      Type = "Private"
+    }
+  )
 }
 
-### Internet GW ###
+# Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
 
-resource "aws_internet_gateway" "gw" {
- vpc_id = aws_vpc.main.id
- 
- tags = {
-   Name = "NotesApp-VPC-IG"
- }
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-igw"
+    }
+  )
 }
 
-### AWS creates a default rt to the VPC but a good practice is create a second rt ###
-resource "aws_route_table" "second_rt" {
- vpc_id = aws_vpc.main.id
- 
- route {
-   cidr_block = "0.0.0.0/0"
-   gateway_id = aws_internet_gateway.gw.id
- }
- 
- tags = {
-   Name = "2nd-Route-Table"
- }
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  # evaluate if "enable_nat_gateway" is true, if it is then create a eip
+  count  = var.enable_nat_gateway ? 1 : 0
+  domain = "vpc"
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-nat-eip"
+    }
+  )
 }
 
+# NAT Gateway
+resource "aws_nat_gateway" "main" {
+  count         = var.enable_nat_gateway ? 1 : 0
+  # here i create only a 1 nat gtw for the 2 distints private subnets of each az (nat gtw need to be in a public subnet to work)
+  allocation_id = aws_eip.nat[0].id
+  subnet_id     = values(aws_subnet.public)[0].id
 
-### here we associate the publics subnets to the route table to connect these to internet ###
-resource "aws_route_table_association" "public_subnet_asso" {
- count = length(var.public_subnet_cidrs)
- subnet_id      = element(aws_subnet.public_subnets[*].id, count.index)
- route_table_id = aws_route_table.second_rt.id
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-nat-gateway"
+    }
+  )
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+# Public Route Table
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-public-rt"
+    }
+  )
+}
+
+# Private Route Table
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  dynamic "route" {
+    for_each = var.enable_nat_gateway ? [1] : []
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.main[0].id
+    }
+  }
+
+  tags = merge(
+    var.common_tags,
+    {
+      Name = "${var.environment}-private-rt"
+    }
+  )
+}
+
+# Public Route Table Association
+resource "aws_route_table_association" "public" {
+  for_each = aws_subnet.public
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Private Route Table Association
+resource "aws_route_table_association" "private" {
+  for_each = aws_subnet.private
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.private.id
 }
