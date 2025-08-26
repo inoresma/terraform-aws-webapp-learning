@@ -36,3 +36,18 @@ module "vpc" {
     Owner       = "DevOps Team"
   }
 }
+
+# Security Groups Module
+module "security_groups" {
+  source = "./modules/security-group"
+
+  vpc_id      = module.vpc.vpc_id
+  environment = "dev"
+  
+  common_tags = {
+    Project     = "NotesApp"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "DevOps Team"
+  }
+}
