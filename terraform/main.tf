@@ -51,3 +51,21 @@ module "security_groups" {
     Owner       = "DevOps Team"
   }
 }
+
+# RDS Module
+module "rds" {
+  source = "./modules/rds"
+
+  private_subnet_ids = values(module.vpc.private_subnet_ids)
+  security_group_id  = module.security_groups.rds_security_group_id
+  
+  environment = "dev"
+  db_password = "NotesApp2024!"  # this is a bad practice but in production i will apply environments variables or AWS Secrets Manager
+  
+  common_tags = {
+    Project     = "NotesApp"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "DevOps Team"
+  }
+}
