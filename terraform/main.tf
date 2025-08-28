@@ -69,3 +69,18 @@ module "rds" {
     Owner       = "DevOps Team"
   }
 }
+
+# S3 Module
+module "s3" {
+  source = "./modules/s3"
+
+  environment = "dev"
+  bucket_name = "notesapp-static-files-dev"
+  
+  common_tags = {
+    Project     = "NotesApp"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "DevOps Team"
+  }
+}
